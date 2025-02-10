@@ -2,10 +2,14 @@
 This is a minimal example of using xNVMe as an `external_source` in a DALI pipeline
 
 ## Setup
-- # Install dependency
+- Install dependency
   * https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
-- # Build docker container
-  * docker build . -t dali-xnvme
-- # Run docker container
-  * docker run --rm --runtime nvidia -it -p 8888:8888 -v .:/workspace/dali-xnvme -v {datadir}:/data --ipc=host dali-xnvme
+- Build docker container
+  * `docker build . -t dali-xnvme`
+- Run docker container
+  * The dataset should reside in a directory, `{datadir}`, with a `train` subdirectory.
+  * The `-p` allows the jupyter instance to be opened in a browser on a host machine
+  * `docker run --rm --runtime nvidia -it -p 8888:8888 -v .:/workspace/dali-xnvme -v {datadir}:/data --ipc=host dali-xnvme`
 ## Jupyter
+- run `jupyter-lab`
+- open `dali-example.ipynb`
