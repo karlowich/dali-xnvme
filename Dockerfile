@@ -15,4 +15,8 @@ WORKDIR /workspace/xnvme/
 RUN git checkout for-ubuntu-focal
 RUN ./toolbox/pkgs/ubuntu-focal.sh
 RUN meson setup builddir && meson compile -C builddir && meson install -C builddir
+
+# Install python bindings
+RUN pip install xnvme
+
 WORKDIR /workspace/dali-xnvme
