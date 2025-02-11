@@ -38,7 +38,7 @@ This is behaviour we need to mimic with the external source for the implementati
 - Run docker container
   * The dataset should reside in a directory, `{datadir}`, with a `train` subdirectory.
   * The `-p` allows the jupyter instance to be opened in a browser on a host machine
-  * `docker run --rm --runtime nvidia -it -p 8888:8888 -v .:/workspace/dali-xnvme -v {datadir}:/data --ipc=host dali-xnvme`
+  * `docker run --rm --privileged --runtime nvidia -it -p 8888:8888 -v .:/workspace/dali-xnvme -v {datadir}:/data --ipc=host dali-xnvme`
 ## Jupyter
 - run `jupyter-lab`
 - open `dali-example.ipynb`
