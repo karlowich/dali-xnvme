@@ -4,6 +4,12 @@ FROM ${FROM_IMAGE_NAME}
 ADD requirements.txt /workspace/
 WORKDIR /workspace/
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install basic tools
+RUN apt-get update
+RUN apt-get -y install pciutils kmod linux-modules-extra-$(uname -r)
+
+# Install xNVMe
 RUN git clone https://github.com/karlowich/xnvme.git
 WORKDIR /workspace/xnvme/
 RUN git checkout for-ubuntu-focal
