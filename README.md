@@ -5,7 +5,7 @@ The goal is a comparison of 4 different DALI pipelines:
 
 - [x] Using `fn.readers.file()`
 - [x] Using an external source with `np.fromfile()`
-- [ ] Using an external source with xNVMe file API and `torch.frombuffer()`
+- [x] Using an external source with xNVMe file API and `torch.frombuffer()`
 - [ ] Using an external source with xNVMe block API, a file -> block mapping, and `torch.frombuffer()`
 
 ## More about the DALI file reader
