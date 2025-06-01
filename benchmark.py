@@ -401,9 +401,7 @@ class XNVMEBAMInputIterator(object):
             
             self.i += 1
         y = 64
-        total_blocks = sum([(elbas[i]-slbas[i]) + 1 for i in range(self.batch_size)])
-        x = int(total_blocks) // 64
-        
+        x = 2048
         err = xnvme.xnvme_kernels_range_submit(x, y, self.dev, xnvme.XNVME_SPEC_NVM_OPC_READ, cast(slbas.data.ptr, POINTER(c_uint32)), cast(elbas.data.ptr, POINTER(c_uint32)), self.nlb, self.nbytes, self.buffers_ref, self.batch_size)
         if err:
             print("Err: ", err)
