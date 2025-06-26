@@ -15,7 +15,9 @@ from ctypes import POINTER, c_uint32, c_uint8, c_void_p, byref, pointer, cast
 import xnvme.ctypes_bindings as xnvme
 from xnvme.ctypes_bindings.api import char_pointer_cast
 
-IMAGENET_MAX_SIZE = 211025920 # max size of images in the imagenet dataset
+IMAGENET_MAX_SIZE = 15737107 # max size of images in the imagenet dataset
+GDS_QD = 63
+NLB = 7
 
 @pipeline_def
 def dali_pipe(datadir):
@@ -60,9 +62,11 @@ class FileInputIterator(object):
             batch.append(
                 np.fromfile(jpeg, dtype=np.uint8)
             )
+
             labels.append(
                 torch.tensor([label], dtype=torch.int32)
             )
+
             self.i += 1
         return (batch, labels)
 
@@ -135,6 +139,8 @@ class XNVMEFileInputIterator(object):
             size = xnvme.xnvme_dev_get_geo(file).contents.tbytes
             ctx = xnvme.xnvme_file_get_cmd_ctx(file)
             err = xnvme.xnvme_file_pread(byref(ctx), self.buffers[i], size, 0)
+            if err:
+                raise IOError(f"Err: {err}")
             
             batch.append(
                 self.views[i][:size]    
@@ -183,10 +189,10 @@ class XNVMECPUInputIterator(object):
         self.batch_size = batch_size
         self.nsid = xnvme.xnvme_dev_get_nsid(self.dev)
         geo = xnvme.xnvme_dev_get_geo(self.dev)
-        self.nlb = 7
+        self.nlb = NLB
         self.nbytes = geo.contents.nbytes
         size = IMAGENET_MAX_SIZE 
-        self.qd = 63
+        self.qd = GDS_QD
         self.buffers = (c_void_p * self.batch_size)()
         self.views = []
         for i in range(self.batch_size):
@@ -199,9 +205,8 @@ class XNVMECPUInputIterator(object):
             self.views.append(view)
         self.queue = POINTER(xnvme.xnvme_queue)()
         err = xnvme.xnvme_queue_init(self.dev, self.qd, 0, byref(self.queue))
-        if err != 0:
-            print("Failed to init queue:", err)
-            raise RuntimeError
+        if err:
+            raise RuntimeError(f"Failed to init queue: {err}")
         
         self.n = len(self.files)
 
@@ -232,7 +237,7 @@ class XNVMECPUInputIterator(object):
         
         err = xnvme.xnvme_io_range_submit(self.queue, xnvme.XNVME_SPEC_NVM_OPC_READ, slbas, elbas, self.nlb, self.nbytes, self.buffers, self.batch_size)
         if err:
-            print("Err: ", err)
+            raise IOError(f"Err: {err}")
 
         batch = [self.views[i][:((elbas[i] - slbas[i])+ 1) * self.nbytes] for i in range(self.batch_size)]
         return (batch, labels)
@@ -273,10 +278,10 @@ class XNVMEGPUInputIterator(object):
         self.batch_size = batch_size
         self.nsid = xnvme.xnvme_dev_get_nsid(self.dev)
         geo = xnvme.xnvme_dev_get_geo(self.dev)
-        self.nlb = 7
+        self.nlb = NLB
         self.nbytes = geo.contents.nbytes
         size = IMAGENET_MAX_SIZE
-        self.qd = 63
+        self.qd = GDS_QD
         self.buffers = (c_void_p * self.batch_size)()
         self.views = []
         for i in range(self.batch_size):
@@ -286,9 +291,8 @@ class XNVMEGPUInputIterator(object):
             self.views.append(view)
         self.queue = POINTER(xnvme.xnvme_queue)()
         err = xnvme.xnvme_queue_init(self.dev, self.qd, 0, byref(self.queue))
-        if err != 0:
-            print("Failed to init queue:", err)
-            raise RuntimeError
+        if err:
+            raise RuntimeError(f"Failed to init queue: {err}")
         
         self.n = len(self.files)
 
@@ -319,7 +323,7 @@ class XNVMEGPUInputIterator(object):
         
         err = xnvme.xnvme_io_range_submit(self.queue, xnvme.XNVME_SPEC_NVM_OPC_READ, slbas, elbas, self.nlb, self.nbytes, self.buffers, self.batch_size)
         if err:
-            print("Err: ", err)
+            raise IOError(f"Err: {err}")
 
         batch = [self.views[i][:((elbas[i] - slbas[i])+ 1) * self.nbytes] for i in range(self.batch_size)]
         return (batch, labels)
@@ -346,7 +350,6 @@ def xnvme_gds_gpu_pipe(dev, bmap):
 
     return jpegs, labels
 
-
 class XNVMEBAMInputIterator(object):
     def __init__(self, dev, bmap, batch_size):
         with open(bmap) as f:
@@ -360,7 +363,7 @@ class XNVMEBAMInputIterator(object):
         self.batch_size = batch_size
         self.nsid = xnvme.xnvme_dev_get_nsid(self.dev)
         geo = xnvme.xnvme_dev_get_geo(self.dev)
-        self.nlb = 7
+        self.nlb = NLB
         self.nbytes = geo.contents.nbytes
         size = IMAGENET_MAX_SIZE
         buffers = []
@@ -371,9 +374,8 @@ class XNVMEBAMInputIterator(object):
             view = cp.ndarray(shape=(size,), dtype=np.uint8, memptr=cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buf, size, dev), 0))
             self.views.append(view)
             
-        self.buffers = cp.asarray(buffers)
-        self.buffers_ref = cast(self.buffers.data.ptr, POINTER(c_void_p))
-        
+        self.buffers = np.asarray(buffers)
+        self.buffers_ref = self.buffers.ctypes.data_as(POINTER(c_void_p))
         self.n = len(self.files)
 
 
@@ -389,8 +391,9 @@ class XNVMEBAMInputIterator(object):
             self.__iter__()
             raise StopIteration
 
-        slbas = cp.ndarray(shape=(self.batch_size,), dtype=cp.uint32)
-        elbas = cp.ndarray(shape=(self.batch_size,), dtype=cp.uint32)
+        slbas = np.zeros([self.batch_size], np.uint32)
+        elbas = np.zeros([self.batch_size], np.uint32)
+
         for i in range(self.batch_size):
             file = self.files[self.i % self.n]
             labels.append(
@@ -400,11 +403,12 @@ class XNVMEBAMInputIterator(object):
             elbas[i] = file["endblock"]
             
             self.i += 1
+
         y = 64
         x = 2048
-        err = xnvme.xnvme_kernels_range_submit(x, y, self.dev, xnvme.XNVME_SPEC_NVM_OPC_READ, cast(slbas.data.ptr, POINTER(c_uint32)), cast(elbas.data.ptr, POINTER(c_uint32)), self.nlb, self.nbytes, self.buffers_ref, self.batch_size)
+        err = xnvme.xnvme_kernels_range_submit(x, y, self.dev, xnvme.XNVME_SPEC_NVM_OPC_READ, slbas.ctypes.data_as(POINTER(c_uint32)), elbas.ctypes.data_as(POINTER(c_uint32)), self.nlb, self.nbytes, self.buffers_ref, self.batch_size)
         if err:
-            print("Err: ", err)
+            raise IOError(f"Err: {err}")
 
         batch = [self.views[i][:((elbas[i] - slbas[i])+ 1) * self.nbytes] for i in range(self.batch_size)]
         return (batch, labels)
@@ -423,12 +427,12 @@ class XNVMEBAMInputIterator(object):
 def xnvme_bam_pipe(dev, bmap):
     pipe = Pipeline.current()
     batch_size = pipe.max_batch_size
-
     jpegs, labels = fn.external_source(
         source=XNVMEBAMInputIterator(dev=dev, bmap=bmap, batch_size=batch_size), num_outputs=2, dtype=[types.UINT8, types.INT32]
     )
 
     return jpegs, labels
+
 
 
 def dev_open(uri, be, mem):
@@ -501,37 +505,34 @@ def main():
     args = setup()
     pipe = None
     if args.dataloader == "dali":
-        print(f"dataloader: {args.dataloader}, datadir: {args.datadir}")
         pipe = dali_pipe(datadir=args.datadir, batch_size=args.batchsize, num_threads=1, device_id=1)
         
     elif args.dataloader == "python-file":
-        print(f"dataloader: {args.dataloader}, datadir: {args.datadir}")
         pipe = file_pipe(datadir=args.datadir, batch_size=args.batchsize, num_threads=1, device_id=1)
 
     elif args.dataloader == "xnvme-file":
-        print(f"dataloader: {args.dataloader}, datadir: {args.datadir}")
         pipe = xnvme_file_pipe(datadir=args.datadir, batch_size=args.batchsize, num_threads=1, device_id=1)
 
     elif args.dataloader == "xnvme-gds":
-        print(f"dataloader: {args.dataloader}, uri: {args.uri}, mem: {args.mem}, bmap: {args.bmap}")
         dev = dev_open(args.uri, "gds", args.mem)
         if args.mem == "cpu":
+            args.dataloader = "xnvme-gds-cpu"
             pipe = xnvme_gds_cpu_pipe(dev=dev, bmap=args.bmap, batch_size=args.batchsize, num_threads=1, device_id=0)
         if args.mem == "gpu":
+            args.dataloader = "xnvme-gds-gpu"
             pipe = xnvme_gds_gpu_pipe(dev=dev, bmap=args.bmap, batch_size=args.batchsize, num_threads=1, device_id=0)
         
     elif args.dataloader == "xnvme-bam":
-        print(f"dataloader: {args.dataloader}, uri: {args.uri}, bmap: {args.bmap}")
         dev = dev_open(args.uri, "bam", None)
         pipe = xnvme_bam_pipe(dev=dev, bmap=args.bmap, batch_size=args.batchsize, num_threads=1, device_id=0)
 
-    print(f"batches: {args.batches}, batchsize: {args.batchsize}")
+    print(f"dataloader: {args.dataloader} batches: {args.batches} batchsize: {args.batchsize}")
 
     pipe.build()
 
     batches = args.batches
 
-    if (not batches):
+    if not batches:
         # Either run forever and wait for exception (GDS, BaM) or set limit (DALI)
         batches = sys.maxsize
         if args.dataloader == "dali":
@@ -541,15 +542,27 @@ def main():
                 # if there is a remainder do one more iteration
                 batches += 1
 
+    # Warmup
+    for _ in range(10):
+        _ = pipe.run()
+
+    mean_start = time.time()
     start = time.time()
-    for _ in range(batches):
+    n = 0
+    for i in range(batches):
         try:
             jpegs, _ = pipe.run()
         except StopIteration:
             break
+        end = time.time()
+        if (end - start) > 1:
+            print(f"img/s: {(args.batchsize*(i - n))/(end - start)}") 
+            n = i
+            start = time.time()
 
-    end = time.time()
-    print(end - start)
+
+    mean_end = time.time()
+    print(f"Mean img/s: {(args.batchsize*batches)/(mean_end - mean_start)}") 
     exit(0)
 
 if __name__ == "__main__":
